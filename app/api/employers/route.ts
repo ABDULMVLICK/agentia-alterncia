@@ -5,10 +5,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json({
-    total: countEmployers(),
-    employers: listEmployers(),
-  });
+  try {
+    return NextResponse.json({
+      total: countEmployers(),
+      employers: listEmployers(),
+    });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message ?? String(e) }, { status: 500 });
+  }
 }
 
 export async function POST(req: Request) {

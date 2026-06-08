@@ -2,14 +2,42 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+/**
+ * Choose a writable data dir.
+ * - Vercel (and most serverless): only /tmp is writable. We use it but persistence
+ *   is per-instance and ephemeral. The client should set env vars in the Vercel
+ *   dashboard for credentials that need to survive cold starts.
+ * - Local: ./data (committed structure, not the .db file).
+ */
+function resolveDataDir(): string {
+  const override = process.env.AGENT_DATA_DIR;
+  if (override) return override;
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return "/tmp/agent-data";
+  }
+  return path.join(process.cwd(), "data");
+}
+
+const DATA_DIR = resolveDataDir();
+
+function ensureDir() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  } catch (e: any) {
+    throw new Error(
+      `Impossible de créer le dossier de données (${DATA_DIR}): ${e.message}. ` +
+        `Définis AGENT_DATA_DIR vers un chemin accessible en écriture.`
+    );
+  }
+}
 
 let _db: Database.Database | null = null;
 
 export function db(): Database.Database {
   if (_db) return _db;
+  ensureDir();
   _db = new Database(path.join(DATA_DIR, "agent.db"));
+  // WAL touches multiple files; OK on /tmp.
   _db.pragma("journal_mode = WAL");
   _db.pragma("foreign_keys = ON");
   migrate(_db);

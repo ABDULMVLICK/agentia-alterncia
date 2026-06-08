@@ -30,6 +30,7 @@ interface TestResult {
 
 export default function SettingsPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [values, setValues] = useState<Partial<Record<SettingKey, string>>>({});
   const [reveal, setReveal] = useState<Partial<Record<SettingKey, boolean>>>({});
   const [saving, setSaving] = useState(false);
@@ -38,8 +39,22 @@ export default function SettingsPage() {
   const [tests, setTests] = useState<Record<string, TestResult> | null>(null);
 
   async function load() {
-    const r = await fetch("/api/settings").then((x) => x.json());
-    setSummary(r);
+    try {
+      const r = await fetch("/api/settings");
+      if (!r.ok) {
+        const text = await r.text();
+        throw new Error(`API ${r.status} — ${text.slice(0, 300)}`);
+      }
+      const data = await r.json();
+      setSummary(data);
+      setLoadError(null);
+      hydrateForm(data);
+    } catch (e: any) {
+      setLoadError(e.message ?? String(e));
+    }
+  }
+
+  function hydrateForm(r: Summary) {
     // Pre-fill non-secret fields with current value
     setValues({
       ANTHROPIC_MODEL: r.plain.ANTHROPIC_MODEL ?? "",
@@ -94,7 +109,39 @@ export default function SettingsPage() {
     }
   }
 
-  if (!summary) return <div className="p-8 text-[var(--color-text-muted)]">Chargement…</div>;
+  if (loadError) {
+    return (
+      <div className="p-4 md:p-8 max-w-2xl">
+        <h1 className="text-xl md:text-2xl font-semibold tracking-tight mb-4">Paramètres</h1>
+        <div className="p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-[13px]">
+          <div className="font-semibold text-red-200 mb-1">L'API n'a pas pu être chargée.</div>
+          <div className="text-red-200/80 mb-3 whitespace-pre-wrap break-words">{loadError}</div>
+          <div className="text-[12px] text-[var(--color-text-muted)] space-y-1.5">
+            <p>
+              Sur <b>Vercel</b>, la base SQLite locale est éphémère. Ajoute tes clés directement dans les{" "}
+              <b>variables d'environnement</b> du dashboard Vercel :
+            </p>
+            <ul className="list-disc pl-5">
+              <li>
+                <code>ANTHROPIC_API_KEY</code>
+              </li>
+              <li>
+                <code>FRANCE_TRAVAIL_CLIENT_ID</code> + <code>FRANCE_TRAVAIL_CLIENT_SECRET</code>
+              </li>
+              <li>
+                <code>FIREBASE_PROJECT_ID</code> + <code>FIREBASE_SERVICE_ACCOUNT_JSON</code> (base64)
+              </li>
+            </ul>
+            <p className="pt-2">Puis re-déploie. L'agent utilise les env vars en fallback automatique.</p>
+          </div>
+          <button onClick={() => load()} className="mt-3 text-[12px] underline text-red-200/80 hover:text-red-100">
+            Réessayer
+          </button>
+        </div>
+      </div>
+    );
+  }
+  if (!summary) return <div className="p-4 md:p-8 text-[var(--color-text-muted)]">Chargement…</div>;
 
   return (
     <div className="p-4 md:p-8 max-w-3xl pb-24 md:pb-8">

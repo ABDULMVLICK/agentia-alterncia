@@ -3,6 +3,8 @@ import { runAgent, type RunParams } from "@/lib/pipeline";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Vercel: allow long-running agent pipeline (up to 60s on hobby plan).
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {

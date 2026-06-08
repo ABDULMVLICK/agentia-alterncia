@@ -127,15 +127,41 @@ Avec les valeurs par défaut (40 offres × 1 scoring + ~3 emails) :
 
 ```bash
 vercel
-# Puis dans le dashboard, ajoute toutes les variables d'environnement
-# (encode FIREBASE_SERVICE_ACCOUNT_JSON en base64)
 ```
 
-**⚠️ Persistance SQLite** : Vercel a un système de fichiers éphémère. Pour la prod, deux options :
-1. **Vercel Postgres** — adapter `lib/db.ts` (10 minutes de boulot)
-2. **Turso / LibSQL** — drop-in replacement pour SQLite, edge-ready
+### ⚠️ Important sur Vercel : configurer les clés en env vars
 
-Pour un MVP démo / usage local intensif, SQLite local marche très bien.
+Le système de fichiers Vercel est éphémère — la base SQLite est recréée à chaque cold-start. **Les clés saisies dans la page Paramètres seront perdues toutes les ~5-15 min**.
+
+➡️ Sur Vercel, **utilise les variables d'environnement** du dashboard pour les clés. L'agent les lit automatiquement en fallback.
+
+Dans **Project → Settings → Environment Variables**, ajoute :
+
+| Variable | Valeur |
+|---|---|
+| `ANTHROPIC_API_KEY` | `sk-ant-...` |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` (optionnel) |
+| `FRANCE_TRAVAIL_CLIENT_ID` | `PAR_xxxxx_xxxxx` |
+| `FRANCE_TRAVAIL_CLIENT_SECRET` | la clé secrète |
+| `FIREBASE_PROJECT_ID` | `alterncia-xxxxx` |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | le JSON entier (inline) **ou** sa version base64 (`base64 -i sa.json`) |
+
+Puis **Redeploy** depuis le dashboard. C'est tout.
+
+> Les seuls éléments qui restent éphémères sont l'historique des runs et la base employeurs CSV. Pour les rendre persistants, migrer `lib/db.ts` vers **Vercel Postgres** ou **Turso** (~10 min de boulot).
+
+### Alternative : héberger sur Railway / Render / Fly.io
+
+Si tu veux SQLite persistant + jobs longs, héberge sur un serveur classique :
+
+```bash
+# Railway
+railway init
+railway up
+# Render: connecte le repo via le dashboard, Build = npm run build, Start = npm start
+```
+
+Tout marche out-of-the-box, la base SQLite persiste, et la cliente peut bien entrer ses clés via `/settings`.
 
 ---
 

@@ -25,12 +25,20 @@ export default function MatchesPage() {
   const [matches, setMatches] = useState<Match[]>([]);
   const [minScore, setMinScore] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   async function load() {
-    const r = await fetch(`/api/matches?min=${minScore}`);
-    const j = await r.json();
-    setMatches(j.matches ?? []);
-    setLoading(false);
+    try {
+      const r = await fetch(`/api/matches?min=${minScore}`);
+      if (!r.ok) throw new Error(`API ${r.status} — ${(await r.text()).slice(0, 200)}`);
+      const j = await r.json();
+      setMatches(j.matches ?? []);
+      setError(null);
+    } catch (e: any) {
+      setError(e.message ?? String(e));
+    } finally {
+      setLoading(false);
+    }
   }
   useEffect(() => {
     load();
@@ -62,7 +70,16 @@ export default function MatchesPage() {
 
       {loading && <div className="text-[var(--color-text-muted)] text-sm">Chargement…</div>}
 
-      {!loading && matches.length === 0 && (
+      {error && (
+        <Card className="border-red-500/30 bg-red-500/10 mb-4">
+          <div className="p-4 text-[13px]">
+            <div className="font-semibold text-red-200 mb-1">Erreur API</div>
+            <div className="text-red-200/80 break-words whitespace-pre-wrap">{error}</div>
+          </div>
+        </Card>
+      )}
+
+      {!loading && !error && matches.length === 0 && (
         <Card className="p-12 text-center">
           <Sparkles className="mx-auto mb-3 text-[var(--color-text-dim)]" size={32} />
           <div className="text-sm text-[var(--color-text-muted)]">

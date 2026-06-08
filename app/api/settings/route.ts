@@ -5,7 +5,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json(summarize());
+  try {
+    return NextResponse.json(summarize());
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message ?? String(e) }, { status: 500 });
+  }
 }
 
 /**

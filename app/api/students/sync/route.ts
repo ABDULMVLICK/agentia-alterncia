@@ -6,7 +6,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json({ cached: countCachedStudents() });
+  try {
+    return NextResponse.json({ cached: countCachedStudents() });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message ?? String(e) }, { status: 500 });
+  }
 }
 
 export async function POST() {

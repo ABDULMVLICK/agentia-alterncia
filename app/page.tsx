@@ -21,6 +21,7 @@ export default function Dashboard() {
   const [employersCount, setEmployersCount] = useState<number | null>(null);
   const [running, setRunning] = useState<"scrape" | "employer_db" | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   // Form state
   const [motsCles, setMotsCles] = useState("développeur alternance");
@@ -28,14 +29,19 @@ export default function Dashboard() {
   const [departement, setDepartement] = useState("");
 
   async function refresh() {
-    const [r, s, e] = await Promise.all([
-      fetch("/api/runs").then((x) => x.json()),
-      fetch("/api/students/sync").then((x) => x.json()),
-      fetch("/api/employers").then((x) => x.json()),
-    ]);
-    setRuns(r.runs);
-    setStudentsCount(s.cached);
-    setEmployersCount(e.total);
+    try {
+      const [rr, sr, er] = await Promise.all([fetch("/api/runs"), fetch("/api/students/sync"), fetch("/api/employers")]);
+      for (const x of [rr, sr, er]) {
+        if (!x.ok) throw new Error(`API ${x.status} — ${(await x.text()).slice(0, 200)}`);
+      }
+      const [r, s, e] = await Promise.all([rr.json(), sr.json(), er.json()]);
+      setRuns(r.runs);
+      setStudentsCount(s.cached);
+      setEmployersCount(e.total);
+      setApiError(null);
+    } catch (e: any) {
+      setApiError(e.message ?? String(e));
+    }
   }
 
   useEffect(() => {
@@ -99,6 +105,25 @@ export default function Dashboard() {
           Lance l'agent, surveille les runs, ouvre les meilleurs matches.
         </p>
       </div>
+
+      {apiError && (
+        <Card className="border-red-500/30 bg-red-500/10 mb-5">
+          <CardBody>
+            <div className="text-[13px] font-semibold text-red-200 mb-1">
+              Impossible de joindre l'API
+            </div>
+            <div className="text-[12px] text-red-200/80 break-words whitespace-pre-wrap">{apiError}</div>
+            <div className="text-[11.5px] text-[var(--color-text-muted)] mt-3 leading-relaxed">
+              Si tu es sur <b>Vercel</b> : la base SQLite n'est pas persistante. Configure tes clés via les
+              variables d'environnement Vercel — voir{" "}
+              <Link href="/settings" className="underline">
+                Paramètres
+              </Link>
+              .
+            </div>
+          </CardBody>
+        </Card>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 md:gap-3 mb-6 md:mb-8">
