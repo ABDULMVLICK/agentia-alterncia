@@ -2,15 +2,18 @@ import { NextResponse } from "next/server";
 import { llm, getModel } from "@/lib/llm";
 import { searchOffers } from "@/lib/france-travail";
 import { firestore } from "@/lib/firestore";
+import { warmSettingsCache } from "@/lib/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 /**
  * Verify that each external integration actually works with the configured creds.
  * Returns per-service status so the user can fix what's broken before launching a run.
  */
 export async function POST() {
+  await warmSettingsCache();
   const results: Record<string, { ok: boolean; detail: string }> = {};
 
   // Anthropic — tiny ping with 1 token max

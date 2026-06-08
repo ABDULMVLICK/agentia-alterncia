@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    return NextResponse.json(summarize());
+    return NextResponse.json(await summarize());
   } catch (e: any) {
     return NextResponse.json({ error: e.message ?? String(e) }, { status: 500 });
   }
@@ -18,18 +18,22 @@ export async function GET() {
  * - String of just bullets ("••••xxxx") → ignored (user didn't change the secret).
  */
 export async function POST(req: Request) {
-  const body = (await req.json()) as { values: Partial<Record<SettingKey, string | null>> };
-  if (!body.values || typeof body.values !== "object") {
-    return NextResponse.json({ error: "values manquant" }, { status: 400 });
-  }
+  try {
+    const body = (await req.json()) as { values: Partial<Record<SettingKey, string | null>> };
+    if (!body.values || typeof body.values !== "object") {
+      return NextResponse.json({ error: "values manquant" }, { status: 400 });
+    }
 
-  let updated = 0;
-  for (const k of ALL_SETTING_KEYS) {
-    if (!(k in body.values)) continue;
-    const v = body.values[k];
-    if (typeof v === "string" && v.startsWith("••••")) continue; // unchanged
-    setSetting(k, v ?? null);
-    updated++;
+    let updated = 0;
+    for (const k of ALL_SETTING_KEYS) {
+      if (!(k in body.values)) continue;
+      const v = body.values[k];
+      if (typeof v === "string" && v.startsWith("••••")) continue;
+      await setSetting(k, v ?? null);
+      updated++;
+    }
+    return NextResponse.json({ ok: true, updated, summary: await summarize() });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message ?? String(e) }, { status: 500 });
   }
-  return NextResponse.json({ ok: true, updated, summary: summarize() });
 }

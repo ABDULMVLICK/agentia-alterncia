@@ -1,52 +1,78 @@
-import Database from "better-sqlite3";
+import type { Client, InValue, Row } from "@libsql/client";
 import path from "node:path";
 import fs from "node:fs";
 
 /**
- * Choose a writable data dir.
- * - Vercel (and most serverless): only /tmp is writable. We use it but persistence
- *   is per-instance and ephemeral. The client should set env vars in the Vercel
- *   dashboard for credentials that need to survive cold starts.
- * - Local: ./data (committed structure, not the .db file).
+ * LibSQL/Turso client.
+ *
+ * Resolution:
+ *  - Remote (Vercel / prod): `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` → uses the web client
+ *    (HTTP-only, no native deps, works in any Node serverless runtime).
+ *  - Local dev: `file:./data/agent.db` via the standard Node client (libsql native binding).
+ *
+ * Both expose the same `Client` API so app code is identical.
  */
-function resolveDataDir(): string {
-  const override = process.env.AGENT_DATA_DIR;
-  if (override) return override;
-  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
-    return "/tmp/agent-data";
-  }
-  return path.join(process.cwd(), "data");
-}
 
-const DATA_DIR = resolveDataDir();
+let _client: Client | null = null;
+let _migrationPromise: Promise<void> | null = null;
 
-function ensureDir() {
+function localFileUrl(): string {
+  const dataDir =
+    process.env.AGENT_DATA_DIR ??
+    (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME
+      ? "/tmp/agent-data"
+      : path.join(process.cwd(), "data"));
   try {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
   } catch (e: any) {
     throw new Error(
-      `Impossible de créer le dossier de données (${DATA_DIR}): ${e.message}. ` +
+      `Impossible de créer le dossier de données (${dataDir}): ${e.message}. ` +
         `Définis AGENT_DATA_DIR vers un chemin accessible en écriture.`
     );
   }
+  return `file:${path.join(dataDir, "agent.db")}`;
 }
 
-let _db: Database.Database | null = null;
-
-export function db(): Database.Database {
-  if (_db) return _db;
-  ensureDir();
-  _db = new Database(path.join(DATA_DIR, "agent.db"));
-  // WAL touches multiple files; OK on /tmp.
-  _db.pragma("journal_mode = WAL");
-  _db.pragma("foreign_keys = ON");
-  migrate(_db);
-  return _db;
+async function makeClient(): Promise<Client> {
+  const tursoUrl = process.env.TURSO_DATABASE_URL;
+  if (tursoUrl) {
+    // HTTP-only client — pure JS, no native bindings. Safe on any serverless runtime.
+    const { createClient } = await import("@libsql/client/web");
+    return createClient({
+      url: tursoUrl,
+      authToken: process.env.TURSO_AUTH_TOKEN,
+    });
+  }
+  // Local dev: file mode (native libsql binding).
+  const { createClient } = await import("@libsql/client");
+  return createClient({ url: localFileUrl() });
 }
 
-function migrate(d: Database.Database) {
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS students (
+export async function db(): Promise<Client> {
+  if (!_client) _client = await makeClient();
+  if (!_migrationPromise) _migrationPromise = migrate(_client);
+  await _migrationPromise;
+  return _client;
+}
+
+// Convenience wrappers — kept tiny so call sites stay readable.
+export async function exec(sql: string, args: InValue[] = []) {
+  const c = await db();
+  return c.execute({ sql, args });
+}
+export async function row<T = Row>(sql: string, args: InValue[] = []): Promise<T | undefined> {
+  const r = await exec(sql, args);
+  return r.rows[0] as T | undefined;
+}
+export async function rows<T = Row>(sql: string, args: InValue[] = []): Promise<T[]> {
+  const r = await exec(sql, args);
+  return r.rows as T[];
+}
+
+async function migrate(c: Client) {
+  // Each statement runs separately so the migration is portable across libsql variants.
+  const stmts = [
+    `CREATE TABLE IF NOT EXISTS students (
       id TEXT PRIMARY KEY,
       email TEXT,
       first_name TEXT,
@@ -56,38 +82,36 @@ function migrate(d: Database.Database) {
       diplome TEXT,
       diplome_recherche TEXT,
       sector_id TEXT,
-      metiers TEXT,           -- JSON array
-      competences TEXT,       -- JSON array of {competence, niveau}
-      soft_skills TEXT,       -- JSON array
-      langues TEXT,           -- JSON array
+      metiers TEXT,
+      competences TEXT,
+      soft_skills TEXT,
+      langues TEXT,
       city TEXT,
       mobility TEXT,
       start_year INTEGER,
       start_month INTEGER,
       duration TEXT,
       rythme TEXT,
-      summary TEXT,           -- short LLM-ready profile summary
-      raw TEXT,               -- full Firestore JSON
+      summary TEXT,
+      raw TEXT,
       synced_at INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS runs (
+    )`,
+    `CREATE TABLE IF NOT EXISTS runs (
       id TEXT PRIMARY KEY,
-      mode TEXT,              -- "scrape" | "employer_db"
-      status TEXT,            -- running | completed | failed
+      mode TEXT,
+      status TEXT,
       started_at INTEGER,
       finished_at INTEGER,
       offers_fetched INTEGER DEFAULT 0,
       matches_found INTEGER DEFAULT 0,
-      params TEXT,            -- JSON
+      params TEXT,
       error TEXT,
-      logs TEXT               -- newline-separated log lines
-    );
-
-    CREATE TABLE IF NOT EXISTS offers (
+      logs TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS offers (
       id TEXT PRIMARY KEY,
       run_id TEXT,
-      source TEXT,            -- "france-travail" | "employer-db"
+      source TEXT,
       external_id TEXT,
       title TEXT,
       company TEXT,
@@ -99,43 +123,34 @@ function migrate(d: Database.Database) {
       description TEXT,
       url TEXT,
       posted_at TEXT,
-      raw TEXT,
-      FOREIGN KEY (run_id) REFERENCES runs(id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_offers_run ON offers(run_id);
-
-    CREATE TABLE IF NOT EXISTS matches (
+      raw TEXT
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_offers_run ON offers(run_id)`,
+    `CREATE TABLE IF NOT EXISTS matches (
       id TEXT PRIMARY KEY,
       run_id TEXT,
       offer_id TEXT,
       student_id TEXT,
-      score INTEGER,            -- 0-100
-      reasons TEXT,             -- JSON array of strings
-      gaps TEXT,                -- JSON array of strings
+      score INTEGER,
+      reasons TEXT,
+      gaps TEXT,
       contact_name TEXT,
       contact_role TEXT,
       contact_email TEXT,
       contact_linkedin TEXT,
       email_subject TEXT,
       email_body TEXT,
-      status TEXT DEFAULT 'pending',  -- pending | sent | dismissed
-      created_at INTEGER,
-      FOREIGN KEY (run_id) REFERENCES runs(id),
-      FOREIGN KEY (offer_id) REFERENCES offers(id),
-      FOREIGN KEY (student_id) REFERENCES students(id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_matches_run ON matches(run_id);
-    CREATE INDEX IF NOT EXISTS idx_matches_score ON matches(score DESC);
-
-    CREATE TABLE IF NOT EXISTS settings (
+      status TEXT DEFAULT 'pending',
+      created_at INTEGER
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_matches_run ON matches(run_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_matches_score ON matches(score DESC)`,
+    `CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT,
       updated_at INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS employers (
+    )`,
+    `CREATE TABLE IF NOT EXISTS employers (
       id TEXT PRIMARY KEY,
       company TEXT,
       website TEXT,
@@ -146,8 +161,9 @@ function migrate(d: Database.Database) {
       contact_role TEXT,
       notes TEXT,
       created_at INTEGER
-    );
-  `);
+    )`,
+  ];
+  for (const s of stmts) await c.execute(s);
 }
 
 export function now(): number {

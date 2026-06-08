@@ -123,45 +123,58 @@ Avec les valeurs par défaut (40 offres × 1 scoring + ~3 emails) :
 
 ---
 
+## 💾 Base de données — Turso (persistante, gratuit)
+
+L'agent utilise **Turso** (managed LibSQL/SQLite). Free tier : 500 DB, 9 GB stockage.
+
+### Setup en 3 min
+
+```bash
+# 1. Installer le CLI Turso (une fois)
+curl -sSfL https://get.tur.so/install.sh | bash
+
+# 2. Créer un compte + une DB
+turso auth signup
+turso db create alterncia-agent
+
+# 3. Récupérer les credentials
+turso db show alterncia-agent --url        # → libsql://xxxxx.turso.io
+turso db tokens create alterncia-agent     # → eyJhbGc...
+```
+
+Mettre ces 2 valeurs dans tes env vars (`.env` en local, dashboard Vercel en prod) :
+```
+TURSO_DATABASE_URL=libsql://alterncia-agent-xxxxx.turso.io
+TURSO_AUTH_TOKEN=eyJhbGc...
+```
+
+C'est tout. Les tables sont créées automatiquement au premier lancement.
+
+> En local sans Turso configuré → fallback automatique sur SQLite fichier (`./data/agent.db`).
+
 ## 🌐 Déploiement Vercel
 
 ```bash
 vercel
 ```
 
-### ⚠️ Important sur Vercel : configurer les clés en env vars
+### Variables d'environnement à mettre dans Vercel
 
-Le système de fichiers Vercel est éphémère — la base SQLite est recréée à chaque cold-start. **Les clés saisies dans la page Paramètres seront perdues toutes les ~5-15 min**.
+Dans **Project → Settings → Environment Variables**, ajouter au minimum :
 
-➡️ Sur Vercel, **utilise les variables d'environnement** du dashboard pour les clés. L'agent les lit automatiquement en fallback.
+| Variable | Obligatoire ? | Valeur |
+|---|---|---|
+| `TURSO_DATABASE_URL` | ✅ | `libsql://xxxxx.turso.io` |
+| `TURSO_AUTH_TOKEN` | ✅ | token Turso |
+| `ANTHROPIC_API_KEY` | optionnel* | `sk-ant-...` |
+| `FRANCE_TRAVAIL_CLIENT_ID` | optionnel* | `PAR_xxxxx_xxxxx` |
+| `FRANCE_TRAVAIL_CLIENT_SECRET` | optionnel* | clé secrète FT |
+| `FIREBASE_PROJECT_ID` | optionnel* | `alterncia-xxxxx` |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | optionnel* | JSON inline ou base64 |
 
-Dans **Project → Settings → Environment Variables**, ajoute :
+\* Optionnel **si** la cliente les saisit dans `/settings`. Sinon, les mettre ici garantit qu'elle n'a rien à toucher.
 
-| Variable | Valeur |
-|---|---|
-| `ANTHROPIC_API_KEY` | `sk-ant-...` |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` (optionnel) |
-| `FRANCE_TRAVAIL_CLIENT_ID` | `PAR_xxxxx_xxxxx` |
-| `FRANCE_TRAVAIL_CLIENT_SECRET` | la clé secrète |
-| `FIREBASE_PROJECT_ID` | `alterncia-xxxxx` |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | le JSON entier (inline) **ou** sa version base64 (`base64 -i sa.json`) |
-
-Puis **Redeploy** depuis le dashboard. C'est tout.
-
-> Les seuls éléments qui restent éphémères sont l'historique des runs et la base employeurs CSV. Pour les rendre persistants, migrer `lib/db.ts` vers **Vercel Postgres** ou **Turso** (~10 min de boulot).
-
-### Alternative : héberger sur Railway / Render / Fly.io
-
-Si tu veux SQLite persistant + jobs longs, héberge sur un serveur classique :
-
-```bash
-# Railway
-railway init
-railway up
-# Render: connecte le repo via le dashboard, Build = npm run build, Start = npm start
-```
-
-Tout marche out-of-the-box, la base SQLite persiste, et la cliente peut bien entrer ses clés via `/settings`.
+Puis **Redeploy**. Les clés saisies dans `/settings` sont maintenant persistées (Turso) et survivent aux cold-starts.
 
 ---
 

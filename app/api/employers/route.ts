@@ -7,8 +7,8 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     return NextResponse.json({
-      total: countEmployers(),
-      employers: listEmployers(),
+      total: await countEmployers(),
+      employers: await listEmployers(),
     });
   } catch (e: any) {
     return NextResponse.json({ error: e.message ?? String(e) }, { status: 500 });
@@ -16,27 +16,26 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as { employers: EmployerRow[] } | { csv: string };
+  try {
+    const body = (await req.json()) as { employers: EmployerRow[] } | { csv: string };
 
-  if ("csv" in body) {
-    const rows = parseCSV(body.csv);
-    const n = upsertEmployers(rows);
-    return NextResponse.json({ inserted: n });
+    if ("csv" in body) {
+      const rs = parseCSV(body.csv);
+      const n = await upsertEmployers(rs);
+      return NextResponse.json({ inserted: n });
+    }
+
+    if ("employers" in body && Array.isArray(body.employers)) {
+      const n = await upsertEmployers(body.employers);
+      return NextResponse.json({ inserted: n });
+    }
+
+    return NextResponse.json({ error: "payload invalide" }, { status: 400 });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message ?? String(e) }, { status: 500 });
   }
-
-  if ("employers" in body && Array.isArray(body.employers)) {
-    const n = upsertEmployers(body.employers);
-    return NextResponse.json({ inserted: n });
-  }
-
-  return NextResponse.json({ error: "payload invalide" }, { status: 400 });
 }
 
-/**
- * Minimal CSV parser — handles quoted fields with commas, no nested quotes.
- * Expected header (case-insensitive):
- *   company,website,sector,city,contactName,contactEmail,contactRole,notes
- */
 function parseCSV(input: string): EmployerRow[] {
   const lines = input.trim().split(/\r?\n/);
   if (lines.length < 2) return [];

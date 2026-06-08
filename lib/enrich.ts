@@ -1,17 +1,13 @@
 /**
  * Decision-maker enrichment.
  *
- * Two sources, in order of preference:
+ * Sources, in order of preference:
  *  1. The offer's own contact field (when France Travail provides one — best signal).
  *  2. The employer-DB stored locally (the client's existing employer email list).
- *  3. A heuristic email guess based on common corporate patterns (firstname.lastname@domain) —
- *     never used as-is; surfaced as "à vérifier" so the user double-checks.
- *
- * We deliberately do NOT call paid enrichment APIs (Hunter, Apollo) by default — the user can
- * plug them in later by replacing `guessFromDomain` with an API call.
+ *  3. A heuristic email guess based on common corporate patterns — surfaced as low-confidence.
  */
 
-import { db } from "./db";
+import { db, exec, rows } from "./db";
 import type { NormalizedOffer } from "./france-travail";
 
 export interface Contact {
@@ -23,7 +19,7 @@ export interface Contact {
   confidence: "high" | "medium" | "low";
 }
 
-export function findContact(offer: NormalizedOffer): Contact {
+export async function findContact(offer: NormalizedOffer): Promise<Contact> {
   // 1. From the offer itself
   if (offer.contactEmail) {
     return {
@@ -35,15 +31,15 @@ export function findContact(offer: NormalizedOffer): Contact {
   }
 
   // 2. From the local employer DB (matched by company name fuzzy)
-  const match = db()
-    .prepare(
-      `SELECT contact_name, contact_role, contact_email
-       FROM employers
-       WHERE LOWER(company) = LOWER(?)
-          OR LOWER(company) LIKE LOWER(?)
-       LIMIT 1`
-    )
-    .get(offer.company, `%${offer.company}%`) as
+  const r = await exec(
+    `SELECT contact_name, contact_role, contact_email
+     FROM employers
+     WHERE LOWER(company) = LOWER(?)
+        OR LOWER(company) LIKE LOWER(?)
+     LIMIT 1`,
+    [offer.company, `%${offer.company}%`]
+  );
+  const match = r.rows[0] as unknown as
     | { contact_name: string; contact_role: string; contact_email: string }
     | undefined;
 
@@ -60,9 +56,7 @@ export function findContact(offer: NormalizedOffer): Contact {
   // 3. Guess from corporate domain (low confidence)
   if (offer.companyUrl) {
     const guess = guessFromDomain(offer.companyUrl);
-    if (guess) {
-      return { email: guess, source: "guessed", confidence: "low" };
-    }
+    if (guess) return { email: guess, source: "guessed", confidence: "low" };
   }
 
   return { source: "none", confidence: "low" };
@@ -94,9 +88,12 @@ export interface EmployerRow {
   notes?: string;
 }
 
-export function upsertEmployers(rows: EmployerRow[]): number {
-  const stmt = db().prepare(`
-    INSERT INTO employers (id, company, website, sector, city, contact_name, contact_email, contact_role, notes, created_at)
+export async function upsertEmployers(input: EmployerRow[]): Promise<number> {
+  const valid = input.filter((r) => !!r.company);
+  if (valid.length === 0) return 0;
+
+  const c = await db();
+  const sql = `INSERT INTO employers (id, company, website, sector, city, contact_name, contact_email, contact_role, notes, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company = excluded.company,
@@ -106,43 +103,42 @@ export function upsertEmployers(rows: EmployerRow[]): number {
       contact_name = excluded.contact_name,
       contact_email = excluded.contact_email,
       contact_role = excluded.contact_role,
-      notes = excluded.notes
-  `);
+      notes = excluded.notes`;
 
-  const tx = db().transaction((rs: EmployerRow[]) => {
-    for (const r of rs) {
-      if (!r.company) continue;
+  await c.batch(
+    valid.map((r) => {
       const id = `emp_${(r.contactEmail ?? r.company).toLowerCase().replace(/[^a-z0-9]/g, "")}`.slice(0, 64);
-      stmt.run(
-        id,
-        r.company,
-        r.website ?? null,
-        r.sector ?? null,
-        r.city ?? null,
-        r.contactName ?? null,
-        r.contactEmail ?? null,
-        r.contactRole ?? null,
-        r.notes ?? null,
-        Date.now()
-      );
-    }
-  });
-  tx(rows);
-  return rows.length;
+      return {
+        sql,
+        args: [
+          id,
+          r.company,
+          r.website ?? null,
+          r.sector ?? null,
+          r.city ?? null,
+          r.contactName ?? null,
+          r.contactEmail ?? null,
+          r.contactRole ?? null,
+          r.notes ?? null,
+          Date.now(),
+        ],
+      };
+    }),
+    "write"
+  );
+  return valid.length;
 }
 
-export function listEmployers(limit = 500): EmployerRow[] {
-  const rows = db()
-    .prepare(
-      `SELECT company, website, sector, city, contact_name as contactName, contact_email as contactEmail,
-              contact_role as contactRole, notes
-       FROM employers ORDER BY created_at DESC LIMIT ?`
-    )
-    .all(limit) as EmployerRow[];
-  return rows;
+export async function listEmployers(limit = 500): Promise<EmployerRow[]> {
+  return await rows<EmployerRow>(
+    `SELECT company, website, sector, city, contact_name as contactName, contact_email as contactEmail,
+            contact_role as contactRole, notes
+     FROM employers ORDER BY created_at DESC LIMIT ?`,
+    [limit]
+  );
 }
 
-export function countEmployers(): number {
-  const r = db().prepare("SELECT COUNT(*) as c FROM employers").get() as { c: number };
-  return r.c;
+export async function countEmployers(): Promise<number> {
+  const r = await exec("SELECT COUNT(*) as c FROM employers");
+  return Number((r.rows[0] as any).c);
 }

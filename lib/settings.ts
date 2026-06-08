@@ -1,9 +1,9 @@
-import { db, now } from "./db";
+import { exec, row, now } from "./db";
 
 /**
- * DB-backed settings, fall back to env vars.
- * Values entered through the UI take precedence over the .env file so the client
- * can manage her own API keys without touching deployment config.
+ * DB-backed settings, falling back to env vars.
+ * Values entered via the UI take precedence over the .env so the client can manage
+ * her own API keys without touching deployment config.
  */
 
 export type SettingKey =
@@ -17,44 +17,58 @@ export type SettingKey =
   | "AGENT_MAX_OFFERS_PER_RUN"
   | "AGENT_MAX_MATCHES_PER_OFFER";
 
-/** Returns DB value if present, otherwise process.env, otherwise undefined. */
+/**
+ * In-memory cache so sync code paths (e.g. inside the LLM/HTTP libs, called per-request)
+ * don't have to await the DB every time. Refreshed on every settings POST.
+ */
+let _cache: Partial<Record<SettingKey, string>> = {};
+let _cacheLoaded = false;
+
+async function loadCache() {
+  const r = await exec("SELECT key, value FROM settings");
+  const next: Partial<Record<SettingKey, string>> = {};
+  for (const row of r.rows) {
+    next[row.key as SettingKey] = row.value as string;
+  }
+  _cache = next;
+  _cacheLoaded = true;
+}
+
+export async function warmSettingsCache(): Promise<void> {
+  await loadCache();
+}
+
+/**
+ * Synchronous getter — returns the cached DB value if loaded, then env, then undefined.
+ * Call `warmSettingsCache()` once before tight loops so the cache is populated.
+ */
 export function getSetting(key: SettingKey): string | undefined {
-  const row = db().prepare("SELECT value FROM settings WHERE key = ?").get(key) as
-    | { value: string }
-    | undefined;
-  if (row?.value) return row.value;
+  if (_cacheLoaded && _cache[key]) return _cache[key];
   return process.env[key];
 }
 
-/** Whether the value is set in DB (true) or coming from env / undefined (false). */
 export function hasDbSetting(key: SettingKey): boolean {
-  const row = db().prepare("SELECT value FROM settings WHERE key = ?").get(key) as
-    | { value: string }
-    | undefined;
-  return !!row?.value;
+  return _cacheLoaded && !!_cache[key];
 }
 
-export function setSetting(key: SettingKey, value: string | null): void {
+export async function setSetting(key: SettingKey, value: string | null): Promise<void> {
   if (value === null || value === "") {
-    db().prepare("DELETE FROM settings WHERE key = ?").run(key);
+    await exec("DELETE FROM settings WHERE key = ?", [key]);
+    delete _cache[key];
     return;
   }
-  db()
-    .prepare(
-      `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
-       ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`
-    )
-    .run(key, value, now());
+  await exec(
+    `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+    [key, value, now()]
+  );
+  _cache[key] = value;
 }
 
 export interface SettingsSummary {
-  /** Whether ANY value (DB or env) is currently configured for this key. */
   configured: Record<SettingKey, boolean>;
-  /** Whether the value was overridden via the UI (DB) vs coming from env. */
   fromDb: Record<SettingKey, boolean>;
-  /** Last 4 chars of secret values, for visual confirmation without leaking. */
   hint: Record<SettingKey, string | null>;
-  /** Plain values for non-secret keys (model, limits) — safe to echo. */
   plain: Partial<Record<SettingKey, string>>;
 }
 
@@ -75,7 +89,8 @@ const PLAIN_KEYS: SettingKey[] = [
 
 const ALL_KEYS: SettingKey[] = [...SECRET_KEYS, ...PLAIN_KEYS];
 
-export function summarize(): SettingsSummary {
+export async function summarize(): Promise<SettingsSummary> {
+  await loadCache();
   const configured = {} as Record<SettingKey, boolean>;
   const fromDb = {} as Record<SettingKey, boolean>;
   const hint = {} as Record<SettingKey, string | null>;
