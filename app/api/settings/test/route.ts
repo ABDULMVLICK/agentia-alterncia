@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { llm, getModel } from "@/lib/llm";
 import { searchOffers } from "@/lib/france-travail";
+import { searchAdzuna, isAdzunaConfigured } from "@/lib/adzuna";
 import { firestore } from "@/lib/firestore";
-import { warmSettingsCache } from "@/lib/settings";
+import { warmSettingsCache, getSetting } from "@/lib/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,12 +33,29 @@ export async function POST() {
     results.anthropic = { ok: false, detail: e.message };
   }
 
-  // France Travail — search for 1 offer
-  try {
-    const offers = await searchOffers({ range: "0-0", motsCles: "alternance" });
-    results.franceTravail = { ok: true, detail: `API accessible (${offers.length} échantillon)` };
-  } catch (e: any) {
-    results.franceTravail = { ok: false, detail: e.message };
+  // Job source — test whichever provider is configured (Adzuna preferred, FT fallback).
+  const useAdzuna = isAdzunaConfigured();
+  const ftConfigured = !!getSetting("FRANCE_TRAVAIL_CLIENT_ID") && !!getSetting("FRANCE_TRAVAIL_CLIENT_SECRET");
+
+  if (useAdzuna) {
+    try {
+      const offers = await searchAdzuna({ what: "alternance", resultsPerPage: 1 });
+      results.adzuna = { ok: true, detail: `API accessible (${offers.length} échantillon)` };
+    } catch (e: any) {
+      results.adzuna = { ok: false, detail: e.message };
+    }
+  } else if (ftConfigured) {
+    try {
+      const offers = await searchOffers({ range: "0-0", motsCles: "alternance" });
+      results.franceTravail = { ok: true, detail: `API accessible (${offers.length} échantillon)` };
+    } catch (e: any) {
+      results.franceTravail = { ok: false, detail: e.message };
+    }
+  } else {
+    results.jobSource = {
+      ok: false,
+      detail: "Aucune source d'offres configurée — remplis Adzuna OU France Travail.",
+    };
   }
 
   // Firebase — list 1 user doc

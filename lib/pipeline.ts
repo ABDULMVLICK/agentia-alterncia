@@ -1,5 +1,6 @@
 import { exec, genId, now } from "./db";
 import { searchOffers, normalizeFTOffer, type FTSearchParams, type NormalizedOffer } from "./france-travail";
+import { searchAdzuna, normalizeAdzuna, isAdzunaConfigured } from "./adzuna";
 import { loadCachedStudents, countCachedStudents, syncStudents } from "./students-cache";
 import { preFilter, scoreOffer } from "./matching";
 import { findContact, listEmployers } from "./enrich";
@@ -213,12 +214,44 @@ export async function runAgent(params: RunParams): Promise<string> {
 // Offer fetching: France Travail (scrape) or DB-based query (employer_db mode)
 // ----------------------------------------------------------------------------
 
+/**
+ * Pick the configured job-search provider.
+ * Order: Adzuna first (instant signup) → France Travail (richer data when available).
+ */
+function pickProvider(): "adzuna" | "france-travail" {
+  if (isAdzunaConfigured()) return "adzuna";
+  return "france-travail";
+}
+
 async function fetchOffers(
   params: RunParams,
   log: (m: string) => Promise<void>,
   maxOffers: number
 ): Promise<NormalizedOffer[]> {
+  const provider = pickProvider();
+  await log(`   → Provider: ${provider}`);
+
+  // Build a keyword query that includes the contract-type signal when needed
+  // (Adzuna doesn't have an "apprentissage" filter — we encode it in the query).
+  const contractKeyword =
+    params.contractType === "apprentissage" || params.contractType === "alternance"
+      ? "alternance"
+      : params.contractType === "stage"
+      ? "stage"
+      : "";
+  const enrichedQuery = [params.motsCles, contractKeyword].filter(Boolean).join(" ").trim();
+
   if (params.mode === "scrape") {
+    if (provider === "adzuna") {
+      await log(`   → Adzuna search: ${enrichedQuery} | where=${params.departement ?? ""}`);
+      const raws = await searchAdzuna({
+        what: enrichedQuery || undefined,
+        where: params.departement,
+        resultsPerPage: Math.min(maxOffers, 50),
+      });
+      return raws.slice(0, maxOffers).map((r) => normalizeAdzuna(r, params.contractType));
+    }
+    // France Travail fallback
     const fp: FTSearchParams = {
       motsCles: params.motsCles,
       typeContrat:
@@ -235,21 +268,29 @@ async function fetchOffers(
     return raws.slice(0, maxOffers).map(normalizeFTOffer);
   }
 
-  // employer_db mode: pull each employer's name and search FT for offers from them
-  await log(`   → Mode base employeurs`);
+  // employer_db mode: for each employer, search by company name on the picked provider
+  await log(`   → Mode base employeurs (${provider})`);
   const employers = await listEmployers(100);
   await log(`   → ${employers.length} employeurs en base`);
   const offers: NormalizedOffer[] = [];
+
   for (const emp of employers.slice(0, 30)) {
     if (offers.length >= maxOffers) break;
     try {
-      const raws = await searchOffers({
-        motsCles: `"${emp.company}"`,
-        range: "0-19",
-      });
-      await log(`     ${emp.company}: ${raws.length} offres trouvées`);
-      for (const r of raws.slice(0, 3)) {
-        const n = normalizeFTOffer(r);
+      let normalized: NormalizedOffer[] = [];
+      if (provider === "adzuna") {
+        const raws = await searchAdzuna({
+          what: `"${emp.company}" ${contractKeyword}`.trim(),
+          resultsPerPage: 20,
+        });
+        normalized = raws.slice(0, 3).map((r) => normalizeAdzuna(r, params.contractType));
+      } else {
+        const raws = await searchOffers({ motsCles: `"${emp.company}"`, range: "0-19" });
+        normalized = raws.slice(0, 3).map(normalizeFTOffer);
+      }
+      await log(`     ${emp.company}: ${normalized.length} offres trouvées`);
+      for (const n of normalized) {
+        // If the public listing doesn't expose a contact, fall back to the employer DB row
         if (!n.contactEmail && emp.contactEmail) {
           n.contactName = emp.contactName;
           n.contactEmail = emp.contactEmail;

@@ -10,6 +10,8 @@ type SettingKey =
   | "ANTHROPIC_MODEL"
   | "FRANCE_TRAVAIL_CLIENT_ID"
   | "FRANCE_TRAVAIL_CLIENT_SECRET"
+  | "ADZUNA_APP_ID"
+  | "ADZUNA_APP_KEY"
   | "FIREBASE_SERVICE_ACCOUNT_JSON"
   | "FIREBASE_PROJECT_ID"
   | "AGENT_MIN_SCORE"
@@ -66,6 +68,8 @@ export default function SettingsPage() {
       ANTHROPIC_API_KEY: r.hint.ANTHROPIC_API_KEY ?? "",
       FRANCE_TRAVAIL_CLIENT_ID: r.hint.FRANCE_TRAVAIL_CLIENT_ID ?? "",
       FRANCE_TRAVAIL_CLIENT_SECRET: r.hint.FRANCE_TRAVAIL_CLIENT_SECRET ?? "",
+      ADZUNA_APP_ID: r.hint.ADZUNA_APP_ID ?? "",
+      ADZUNA_APP_KEY: r.hint.ADZUNA_APP_KEY ?? "",
       FIREBASE_SERVICE_ACCOUNT_JSON: r.hint.FIREBASE_SERVICE_ACCOUNT_JSON ?? "",
     });
   }
@@ -222,10 +226,44 @@ export default function SettingsPage() {
         />
       </Section>
 
+      {/* Adzuna — fastest path (instant signup, no validation delay) */}
+      <Section
+        title="Adzuna (recommandé — accès instantané)"
+        subtitle="Source d'offres alternative à France Travail. Inscription instantanée, 1000 appels/mois gratuits."
+        icon={<Database size={14} />}
+      >
+        <SecretField
+          k="ADZUNA_APP_ID"
+          label="App ID"
+          placeholder="abcd1234"
+          hint={summary.hint.ADZUNA_APP_ID}
+          fromDb={summary.fromDb.ADZUNA_APP_ID}
+          fromEnv={summary.configured.ADZUNA_APP_ID && !summary.fromDb.ADZUNA_APP_ID}
+          value={values.ADZUNA_APP_ID ?? ""}
+          onChange={(v) => set("ADZUNA_APP_ID", v)}
+          reveal={reveal.ADZUNA_APP_ID ?? false}
+          toggleReveal={() => setReveal((r) => ({ ...r, ADZUNA_APP_ID: !r.ADZUNA_APP_ID }))}
+          helpUrl="https://developer.adzuna.com/signup"
+          helpText="S'inscrire (1 min) sur developer.adzuna.com"
+        />
+        <SecretField
+          k="ADZUNA_APP_KEY"
+          label="App Key"
+          placeholder="..."
+          hint={summary.hint.ADZUNA_APP_KEY}
+          fromDb={summary.fromDb.ADZUNA_APP_KEY}
+          fromEnv={summary.configured.ADZUNA_APP_KEY && !summary.fromDb.ADZUNA_APP_KEY}
+          value={values.ADZUNA_APP_KEY ?? ""}
+          onChange={(v) => set("ADZUNA_APP_KEY", v)}
+          reveal={reveal.ADZUNA_APP_KEY ?? false}
+          toggleReveal={() => setReveal((r) => ({ ...r, ADZUNA_APP_KEY: !r.ADZUNA_APP_KEY }))}
+        />
+      </Section>
+
       {/* France Travail */}
       <Section
-        title="France Travail"
-        subtitle="API publique gratuite des offres d'emploi (alternance, stage, etc.)"
+        title="France Travail (alternative)"
+        subtitle="Plus complet (validation FT 1-2 jours). Si Adzuna est rempli, Adzuna est utilisé."
         icon={<Database size={14} />}
       >
         <SecretField
