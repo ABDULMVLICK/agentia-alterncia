@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Sparkles, History, Building2, Settings, Users } from "lucide-react";
+import { LayoutDashboard, Sparkles, History, Building2, Settings, Users, LogOut } from "lucide-react";
 
 const NAV = [
   { href: "/", label: "Tableau", mobileLabel: "Home", icon: LayoutDashboard },
@@ -14,6 +14,11 @@ const NAV = [
 
 export default function Sidebar() {
   const path = usePathname();
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/login";
+  }
 
   return (
     <>
@@ -49,13 +54,20 @@ export default function Sidebar() {
           })}
         </nav>
 
-        <div className="p-3 border-t border-[var(--color-border)]">
+        <div className="p-3 border-t border-[var(--color-border)] space-y-1">
+          <button
+            onClick={logout}
+            className="flex w-full items-center gap-2.5 px-3 py-2 rounded-md text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-panel-2)] transition-colors"
+          >
+            <LogOut size={13} />
+            <span>Déconnexion</span>
+          </button>
           <div className="text-[11px] text-[var(--color-text-dim)] px-2">v0.1 · MVP</div>
         </div>
       </aside>
 
       {/* ============ Mobile top bar ============ */}
-      <header className="md:hidden fixed top-0 inset-x-0 z-40 h-14 bg-[var(--color-panel)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-4">
+      <header className="md:hidden fixed top-0 inset-x-0 z-40 h-14 bg-[var(--color-panel)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center justify-between px-4">
         <div className="flex items-center gap-2.5">
           <div className="w-7 h-7 rounded-md bg-gradient-to-br from-[var(--color-accent)] to-[var(--color-accent-2)] flex items-center justify-center">
             <Users size={14} className="text-white" />
@@ -65,6 +77,13 @@ export default function Sidebar() {
             <div className="text-[10px] text-[var(--color-text-muted)] leading-tight">Agent prospection</div>
           </div>
         </div>
+        <button
+          onClick={logout}
+          className="text-[var(--color-text-muted)] active:text-[var(--color-text)] p-2"
+          aria-label="Déconnexion"
+        >
+          <LogOut size={16} />
+        </button>
       </header>
 
       {/* ============ Mobile bottom nav ============ */}
